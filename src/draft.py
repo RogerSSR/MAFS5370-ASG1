@@ -17,8 +17,15 @@ class StockReturn ( FiniteDistribution [ float ] ) :
     def sample ( self ) -> float :
         return self.a if random.uniform ( 0, 1 ) <= self.p else self.b
 
-    def table ( self ) -> Mapping [ bool, float ] :
-        return { True : self.p, False : 1 - self.p }
+    def table ( self ) -> Mapping [ float, float ] :
+        return {
+            self.a : self.p,
+            self.b : 1 - self.p
+        }
 
-    def probability ( self, outcome: bool ) -> float :
-        return self.p if outcome else 1 - self.p
+    def probability ( self, outcome: float ) -> float :
+        if outcome is self.a :
+            return self.p
+        if outcome is self.b :
+            return 1 - self.p
+        return 0
