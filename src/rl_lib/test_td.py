@@ -20,7 +20,10 @@ class FlipFlop ( FiniteMarkovRewardProcess [ bool ] ):
     '''
 
     def __init__ ( self, p: float ):
-        transition_reward_map = { b: Categorical ( { (not b, 2.0): p, (b, 1.0): 1 - p } ) for b in (True, False) }
+        transition_reward_map = { b: Categorical ( {
+            (not b, 2.0): p,
+            (b, 1.0): 1 - p
+            } ) for b in (True, False) }
         super ( ).__init__ ( transition_reward_map )
 
 
@@ -30,7 +33,28 @@ class TestEvaluate ( unittest.TestCase ):
 
         self.finite_flip_flop = FlipFlop ( 0.7 )
 
-        self.finite_mdp = FiniteMarkovDecisionProcess ( { True: { True: Categorical ( { (True, 1.0): 0.7, (False, 2.0): 0.3 } ), False: Categorical ( { (True, 1.0): 0.3, (False, 2.0): 0.7 } ), }, False: { True: Categorical ( { (False, 1.0): 0.7, (True, 2.0): 0.3 } ), False: Categorical ( { (False, 1.0): 0.3, (True, 2.0): 0.7 } ), } } )
+        self.finite_mdp = FiniteMarkovDecisionProcess ( {
+            True: {
+                True: Categorical ( {
+                    (True, 1.0): 0.7,
+                    (False, 2.0): 0.3
+                    } ),
+                False: Categorical ( {
+                    (True, 1.0): 0.3,
+                    (False, 2.0): 0.7
+                    } ),
+                },
+            False: {
+                True: Categorical ( {
+                    (False, 1.0): 0.7,
+                    (True, 2.0): 0.3
+                    } ),
+                False: Categorical ( {
+                    (False, 1.0): 0.3,
+                    (True, 2.0): 0.7
+                    } ),
+                }
+            } )
 
     def test_evaluate_finite_mrp ( self ) -> None:
         start = Tabular ( { s: 0.0 for s in self.finite_flip_flop.non_terminal_states }, count_to_weight_func = lambda _: 0.1 )
@@ -54,7 +78,8 @@ class TestEvaluate ( unittest.TestCase ):
             assert False
 
     def test_evaluate_finite_mdp ( self ) -> None:
-        q_0: Tabular [ Tuple [ NonTerminal [ bool ], bool ] ] = Tabular ( { (s, a): 0.0 for s in self.finite_mdp.non_terminal_states for a in self.finite_mdp.actions ( s ) }, count_to_weight_func = lambda _: 0.1 )
+        q_0: Tabular [ Tuple [ NonTerminal [ bool ], bool ] ] = Tabular ( { (s, a): 0.0 for s in self.finite_mdp.non_terminal_states for a in
+                                                                            self.finite_mdp.actions ( s ) }, count_to_weight_func = lambda _: 0.1 )
 
         uniform_policy: FinitePolicy [ bool, bool ] = FinitePolicy ( { s.state: Choose ( self.finite_mdp.actions ( s ) ) for s in self.finite_mdp.non_terminal_states } )
 

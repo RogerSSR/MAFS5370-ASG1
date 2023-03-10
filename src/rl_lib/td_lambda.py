@@ -26,7 +26,7 @@ def lambda_return_prediction ( traces: Iterable [ Iterable [ mp.TransitionStep [
       traces -- a sequence of traces
       approx_0 -- initial approximation of value function
       γ -- discount rate (0 < γ ≤ 1)
-      lambd -- lambda parameter (0 <= lambd <= 1)
+      lambda -- lambda parameter (0 <= lambda <= 1)
     '''
     func_approx: ValueFunctionApprox [ S ] = approx_0
     yield func_approx

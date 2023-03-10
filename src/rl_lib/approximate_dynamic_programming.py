@@ -32,7 +32,6 @@ def extended_vf ( vf: ValueFunctionApprox [ S ], s: State [ S ] ) -> float:
 
 
 def evaluate_finite_mrp ( mrp: FiniteMarkovRewardProcess [ S ], γ: float, approx_0: ValueFunctionApprox [ S ] ) -> Iterator [ ValueFunctionApprox [ S ] ]:
-
     '''
     Iteratively calculate the value function for the give finite Markov
     Reward Process, using the given FunctionApprox to approximate the
@@ -48,12 +47,10 @@ def evaluate_finite_mrp ( mrp: FiniteMarkovRewardProcess [ S ], γ: float, appro
 
 
 def evaluate_mrp ( mrp: MarkovRewardProcess [ S ], γ: float, approx_0: ValueFunctionApprox [ S ], non_terminal_states_distribution: NTStateDistribution [ S ], num_state_samples: int ) -> Iterator [ ValueFunctionApprox [ S ] ]:
-
     '''
     Iteratively calculate the value function for the given Markov Reward
     Process, using the given FunctionApprox to approximate the value function
     at each step for a random sample of the process' non-terminal states.
-
     '''
 
     def update ( v: ValueFunctionApprox [ S ] ) -> ValueFunctionApprox [ S ]:
@@ -69,10 +66,10 @@ def evaluate_mrp ( mrp: MarkovRewardProcess [ S ], γ: float, approx_0: ValueFun
 
 
 def value_iteration_finite ( mdp: FiniteMarkovDecisionProcess [ S, A ], γ: float, approx_0: ValueFunctionApprox [ S ] ) -> Iterator [ ValueFunctionApprox [ S ] ]:
-    '''Iteratively calculate the Optimal Value function for the given finite
+    '''
+    Iteratively calculate the Optimal Value function for the given finite
     Markov Decision Process, using the given FunctionApprox to approximate the
     Optimal Value function at each step
-
     '''
 
     def update ( v: ValueFunctionApprox [ S ] ) -> ValueFunctionApprox [ S ]:
@@ -86,11 +83,11 @@ def value_iteration_finite ( mdp: FiniteMarkovDecisionProcess [ S, A ], γ: floa
 
 
 def value_iteration ( mdp: MarkovDecisionProcess [ S, A ], γ: float, approx_0: ValueFunctionApprox [ S ], non_terminal_states_distribution: NTStateDistribution [ S ], num_state_samples: int ) -> Iterator [ ValueFunctionApprox [ S ] ]:
-    '''Iteratively calculate the Optimal Value function for the given
+    '''
+    Iteratively calculate the Optimal Value function for the given
     Markov Decision Process, using the given FunctionApprox to approximate the
     Optimal Value function at each step for a random sample of the process'
     non-terminal states.
-
     '''
 
     def update ( v: ValueFunctionApprox [ S ] ) -> ValueFunctionApprox [ S ]:
@@ -200,10 +197,10 @@ MDP_FuncApproxQ_Distribution = Tuple [ MarkovDecisionProcess [ S, A ], QValueFun
 
 
 def back_opt_qvf ( mdp_f0_mu_triples: Sequence [ MDP_FuncApproxQ_Distribution [ S, A ] ], γ: float, num_state_samples: int, error_tolerance: float ) -> Iterator [ QValueFunctionApprox [ S, A ] ]:
-    '''Use backwards induction to find the optimal q-value function  policy at
+    '''
+    Use backwards induction to find the optimal q-value function  policy at
     each time step, using the given FunctionApprox (for Q-Value) for each time
     step for a random sample of the time step's states.
-
     '''
     horizon: int = len ( mdp_f0_mu_triples )
     qvf: List [ QValueFunctionApprox [ S, A ] ] = [ ]
