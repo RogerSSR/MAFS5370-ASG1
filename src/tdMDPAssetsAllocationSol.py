@@ -1,14 +1,13 @@
 from dataclasses import dataclass
-from typing import Callable, Iterator, Mapping, Sequence, Tuple
+from operator import itemgetter
+from typing import Callable, Iterator, List, Mapping, Sequence, Set, Tuple
 
 import numpy as np
 
 from src.rl_lib.approximate_dynamic_programming import QValueFunctionApprox
-from src.rl_lib.control_utils import get_vf_and_policy_from_qvf
-from src.rl_lib.distribution import Categorical, Distribution, SampledDistribution, Uniform
+from src.rl_lib.distribution import Categorical, Choose, Distribution, SampledDistribution
 from src.rl_lib.function_approx import learning_rate_schedule, Tabular
 from src.rl_lib.markov_decision_process import MarkovDecisionProcess, NonTerminal, State, Terminal
-from src.rl_lib.td import glie_sarsa
 
 
 def generateReturnSequence ( a: float, b: float, p: float ) -> Sequence [ Distribution [ float ] ]:
@@ -21,6 +20,21 @@ def generateReturnSequence ( a: float, b: float, p: float ) -> Sequence [ Distri
 
 def generateUtilityFunction ( utilityAlpha: float ) -> Callable [ [ float ], float ]:
     return lambda x: (1 - (np.exp ( -utilityAlpha * x ))) / utilityAlpha
+
+
+def epsilon_greedy_action ( q: QValueFunctionApprox [ float, float ], nt_state: NonTerminal [ float ], actions: Set [ float ], epsilon: float
+                            ) -> float:
+    '''
+    given :
+    a non-terminal state,
+    a Q-Value Function (in the form of a FunctionApprox: (state, action) -> Value
+    epislon
+
+    return an action sampled from the probability distribution implied by an
+    epsilon-greedy policy that is derived from the Q-Value Function.
+    '''
+    greedy_action: float = max ( ((a, q ( (nt_state, a) )) for a in actions), key = itemgetter ( 1 ) ) [ 0 ]
+    return Categorical ( { a: epsilon / len ( actions ) + (1 - epsilon if a == greedy_action else 0.) for a in actions } ).sample ( )
 
 
 @dataclass ( init = False )
@@ -73,6 +87,20 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
     def actions ( self, state: NonTerminal [ float ] ) -> Sequence [ float ]:
         return np.linspace ( 0, state.state, self.actionSpaceLimit )
 
+    def getNonTerminalStates ( self, noOfTraces: int = 10000 ) -> Sequence [ NonTerminal [ float ] ]:
+        ind: int = 0
+        ret: List [ NonTerminal [ float ] ] = [ ]
+        while ind < noOfTraces:
+            s: State [ float ] = NonTerminal ( self.w0 )
+            ts: int = 1
+            ret.append ( s )
+            ind = ind + 1
+            while isinstance ( s, NonTerminal ):
+                s = self.steps ( s, self.actions ( s ) [ 0 ], ts ).sample ( ) [ 0 ]
+                ts = ts + 1
+                ret.append ( s )
+        return ret
+
 
 @dataclass ( init = False )
 class TDMDPAssetAllocationSol:
@@ -85,29 +113,45 @@ class TDMDPAssetAllocationSol:
     qvfs: Iterator [ QValueFunctionApprox [ float, int ] ]
     max_episode_length: int
     gamma: float
-    epsilon_as_func_of_episodes: float
+    epsilon_as_func_of_episodes: Callable [ [ int ], float ]  # lambda k: k ** -0.5
 
-    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, totalSample: int, max_episode_length: int, epsilon_as_func_of_episodes: float, gamma: float = 0.9, exponent: float = 0.5, initial_learning_rate: float = 0.03, half_life: float = 1000 ):
+    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, totalSample: int, max_episode_length: int, epsilon_as_func_of_episodes: Callable [ [ int ], float ], gamma: float = 0.9, exponent: float = 0.5, initial_learning_rate: float = 0.03, half_life: float = 1000 ):
         self.mdp = AssetAllocationMDP ( w0, a, b, p, utilityAlpha, steps, totalSample )
-        self.initial_qvf_dict = { (s, a): 0. for s in self.mdp.getNonTerminalStateDistribution ( ) for a in self.mdp.actions ( s ) }
+        self.initial_qvf_dict = { (s, a): 0. for s in self.mdp.getNonTerminalStates ( ) for a in self.mdp.actions ( s ) }
         self.learning_rate_func = learning_rate_schedule ( initial_learning_rate = initial_learning_rate, half_life = half_life, exponent = exponent )
         self.max_episode_length = max_episode_length
         self.gamma = gamma
         self.epsilon_as_func_of_episodes = epsilon_as_func_of_episodes
 
     def glieSARSASolve ( self ) -> None:
-        self.qvfs = glie_sarsa ( mdp = self.mdp, states = Uniform ( self.mdp.getNonTerminalStateDistribution ( ) ), approx_0 = Tabular ( values_map = self.initial_qvf_dict, count_to_weight_func = self.learning_rate_func ), gamma = self.gamma, epsilon_as_func_of_episodes = self.epsilon_as_func_of_episodes, max_episode_length = self.max_episode_length )
-
-    def printSolution ( self ) -> None:
-        import itertools
-        import src.rl_lib.iterate as iterate
-        num_updates = num_episodes * self.max_episode_length
-        final_qvf: QValueFunctionApprox [ float, int ] = iterate.last ( itertools.islice ( self.qvfs, num_updates ) )
-        opt_vf, opt_policy = get_vf_and_policy_from_qvf ( mdp = self.mdp, qvf = final_qvf )
-        print ( f"GLIE SARSA Optimal Value Function with {num_updates: d } updates" )
-        print ( opt_vf )
-        print ( f"GLIE SARSA Optimal Policy with {num_updates: d } updates" )
-        print ( opt_policy )
+        """
+            Text Book P357
+            GLI SARSA produces a generator (Iterator) of Q-Value Function estimates at the end
+            of each atomic experience.
+            The while True loops over trace experiences.
+            The inner while loops over time steps—each of these steps involves the following
+            """
+        q: QValueFunctionApprox [ float, float ] = Tabular ( values_map = self.initial_qvf_dict, count_to_weight_func = self.learning_rate_func )
+        yield q
+        num_episodes: int = 0
+        ntStateDist: Distribution [ NonTerminal [ float ] ] = Choose ( self.mdp.getNonTerminalStates ( ) )
+        while True:
+            num_episodes += 1
+            epsilon: float = self.epsilon_as_func_of_episodes ( num_episodes )
+            state: NonTerminal [ float ] = ntStateDist.sample ( )
+            action: float = epsilon_greedy_action ( q = q, nt_state = state, actions = set ( self.mdp.actions ( state ) ), epsilon = epsilon )
+            steps: int = 0
+            while isinstance ( state, NonTerminal ) and steps < self.max_episode_length:
+                next_state, reward = self.mdp.step ( state, action ).sample ( )
+                if isinstance ( next_state, NonTerminal ):
+                    next_action: float = epsilon_greedy_action ( q = q, nt_state = next_state, actions = set ( self.mdp.actions ( next_state ) ), epsilon = epsilon )
+                    q = q.update ( [ ((state, action), reward + self.gamma * q ( (next_state, next_action) )) ] )
+                    action = next_action
+                else:
+                    q = q.update ( [ ((state, action), reward) ] )
+                yield q
+                steps += 1
+                state = next_state
 
 
 if __name__ == '__main__':
