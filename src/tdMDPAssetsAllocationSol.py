@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import Callable, Iterator, List, Mapping, Sequence, Tuple
+from typing import Callable, Iterator, Mapping, Sequence, Tuple
 
 import numpy as np
 
-from src.rl_lib.approximate_dynamic_programming import NTStateDistribution, QValueFunctionApprox
+from src.rl_lib.approximate_dynamic_programming import QValueFunctionApprox
 from src.rl_lib.control_utils import get_vf_and_policy_from_qvf
-from src.rl_lib.distribution import Categorical, Choose, Distribution, SampledDistribution, Uniform
+from src.rl_lib.distribution import Categorical, Distribution, SampledDistribution, Uniform
 from src.rl_lib.function_approx import learning_rate_schedule, Tabular
 from src.rl_lib.markov_decision_process import MarkovDecisionProcess, NonTerminal, State, Terminal
 from src.rl_lib.td import glie_sarsa
@@ -41,12 +41,13 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
     utilityAlpha: float
     steps: int
     totalSample: int
+    actionSpaceLimit: int
 
     riskyDist: Sequence [ Distribution [ float ] ]
     riskfreeRate: Sequence [ float ]
     utilityFunc: Callable [ [ float ], float ]
 
-    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, ttlSample: int ):
+    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, ttlSample: int, actionLimit: int = 10 ):
         super ( ).__init__ ( )
         self.w0 = w0
         self.a = a
@@ -58,6 +59,7 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
         self.riskyDist = generateReturnSequence ( a, b, p )
         self.riskfreeRate = np.zeros ( steps )
         self.utilityFunc = generateUtilityFunction ( utilityAlpha )
+        self.actionSpaceLimit = actionLimit
 
     def step ( self, state: NonTerminal [ float ], action: float, ts: int ) -> SampledDistribution [ Tuple [ State [ float ], float ] ]:
         def sample_func ( wealth = state, allocation = action, t = ts ) -> Tuple [ State [ float ], float ]:
@@ -69,23 +71,7 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
         return SampledDistribution ( sampler = sample_func, expectation_samples = self.totalSample )
 
     def actions ( self, state: NonTerminal [ float ] ) -> Sequence [ float ]:
-        # TODO fix infinity
-        while True:
-            yield Uniform ( right = state.state ).sample ( )
-
-    def getNonTerminalStateDistribution ( self, noOfTraces: int = 10000 ) -> NTStateDistribution [ float ]:
-        ind: int = 0
-        ret: List [ float ] = [ ]
-        while ind < noOfTraces:
-            s: State [ float ] = NonTerminal ( self.w0 )
-            ts: int = 1
-            ret.append ( s )
-            ind = ind + 1
-            while isinstance ( s, NonTerminal ):
-                s = self.steps ( s, self.actions ( s ) [ 0 ], ts ).sample ( ) [ 0 ]
-                ts = ts + 1
-                ret.append ( s )
-        return Choose ( ret )
+        return np.linspace ( 0, state.state, self.actionSpaceLimit )
 
 
 @dataclass ( init = False )
