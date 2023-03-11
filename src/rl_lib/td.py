@@ -1,6 +1,5 @@
 '''
-Monte Carlo methods for working with Markov Reward Process and
-Markov Decision Processes.
+Monte Carlo methods for working with Markov Reward Process and Markov Decision Processes.
 '''
 
 import itertools
@@ -103,7 +102,7 @@ def epsilon_greedy_action ( q: QValueFunctionApprox [ S, A ], nt_state: NonTermi
 def glie_sarsa ( mdp: MarkovDecisionProcess [ S, A ], states: NTStateDistribution [ S ], approx_0: QValueFunctionApprox [ S, A ], γ: float, ϵ_as_func_of_episodes: Callable [ [ int ], float ], max_episode_length: int
                  ) -> Iterator [ QValueFunctionApprox [ S, A ] ]:
     """
-    TestBook P357
+    Text Book P357
     GLI SARSA produces a generator (Iterator) of Q-Value Function estimates at the end
     of each atomic experience.
     The while True loops over trace experiences.

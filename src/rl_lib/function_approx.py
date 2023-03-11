@@ -566,6 +566,13 @@ class DNNApprox ( FunctionApprox [ X ] ):
 
 
 def learning_rate_schedule ( initial_learning_rate: float, half_life: float, exponent: float ) -> Callable [ [ int ], float ]:
+    """
+    Effective use of Tabular TD Prediction requires us to create an appropriate learning
+    rate schedule by suitably lowering the learning rate as a function of the number of occurrences of a state
+    in the atomic experiences stream (learning rate schedule specified
+    by count_to_weight_func attribute of Tabular class).
+    """
+
     def lr_func ( n: int ) -> float:
         return initial_learning_rate * (1 + (n - 1) / half_life) ** -exponent
 

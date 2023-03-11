@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import Callable, Iterator, Mapping, Sequence, Tuple
+from typing import Callable, Iterator, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
-from src.rl_lib.approximate_dynamic_programming import QValueFunctionApprox
+from src.rl_lib.approximate_dynamic_programming import NTStateDistribution, QValueFunctionApprox
 from src.rl_lib.control_utils import get_vf_and_policy_from_qvf
-from src.rl_lib.distribution import Categorical, Distribution, SampledDistribution, Uniform
+from src.rl_lib.distribution import Categorical, Choose, Distribution, SampledDistribution, Uniform
 from src.rl_lib.function_approx import learning_rate_schedule, Tabular
 from src.rl_lib.markov_decision_process import MarkovDecisionProcess, NonTerminal, State, Terminal
 from src.rl_lib.td import glie_sarsa
@@ -28,10 +28,10 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
     """
     State : Wealth Wt,
     Action : investment in risky asset (= x_t)
-    Investment in riskless asset is W_t - x_t
+    Investment in riskless asset : W_t - x_t
 
     risky asset return : { a ~ p; b ~ ( 1 - p ) }
-    utility function : ( 1 - exp ( -alpha * Wealth) ) / alpha
+    utility function : ( 1 - exp ( -alpha * Wealth ) ) / alpha
     """
 
     w0: float
@@ -69,8 +69,23 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
         return SampledDistribution ( sampler = sample_func, expectation_samples = self.totalSample )
 
     def actions ( self, state: NonTerminal [ float ] ) -> Sequence [ float ]:
+        # TODO fix infinity
         while True:
             yield Uniform ( right = state.state ).sample ( )
+
+    def getNonTerminalStateDistribution ( self, noOfTraces: int = 10000 ) -> NTStateDistribution [ float ]:
+        ind: int = 0
+        ret: List [ float ] = [ ]
+        while ind < noOfTraces:
+            s: State [ float ] = NonTerminal ( self.w0 )
+            ts: int = 1
+            ret.append ( s )
+            ind = ind + 1
+            while isinstance ( s, NonTerminal ):
+                s = self.steps ( s, self.actions ( s ) [ 0 ], ts ).sample ( ) [ 0 ]
+                ts = ts + 1
+                ret.append ( s )
+        return Choose ( ret )
 
 
 @dataclass ( init = False )
@@ -84,16 +99,18 @@ class TDMDPAssetAllocationSol:
     qvfs: Iterator [ QValueFunctionApprox [ float, int ] ]
     max_episode_length: int
     gamma: float
+    epsilon_as_func_of_episodes: float
 
-    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, totalSample: int, max_episode_length: int, gamma: float ):
+    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, totalSample: int, max_episode_length: int, epsilon_as_func_of_episodes: float, gamma: float = 0.9, exponent: float = 0.5, initial_learning_rate: float = 0.03, half_life: float = 1000 ):
         self.mdp = AssetAllocationMDP ( w0, a, b, p, utilityAlpha, steps, totalSample )
-        self.initial_qvf_dict = { (s, a): 0. for s in self.mdp.non_terminal_states for a in self.mdp.actions ( s ) }
+        self.initial_qvf_dict = { (s, a): 0. for s in self.mdp.getNonTerminalStateDistribution ( ) for a in self.mdp.actions ( s ) }
         self.learning_rate_func = learning_rate_schedule ( initial_learning_rate = initial_learning_rate, half_life = half_life, exponent = exponent )
         self.max_episode_length = max_episode_length
         self.gamma = gamma
+        self.epsilon_as_func_of_episodes = epsilon_as_func_of_episodes
 
     def glieSARSASolve ( self ) -> None:
-        self.qvfs = glie_sarsa ( mdp = self.mdp, states = Uniform ( self.mdp.non_terminal_states ), approx_0 = Tabular ( values_map = self.initial_qvf_dict, count_to_weight_func = self.learning_rate_func ), gamma = self.gamma, epsilon_as_func_of_episodes = epsilon_as_func_of_episodes, max_episode_length = self.max_episode_length )
+        self.qvfs = glie_sarsa ( mdp = self.mdp, states = Uniform ( self.mdp.getNonTerminalStateDistribution ( ) ), approx_0 = Tabular ( values_map = self.initial_qvf_dict, count_to_weight_func = self.learning_rate_func ), gamma = self.gamma, epsilon_as_func_of_episodes = self.epsilon_as_func_of_episodes, max_episode_length = self.max_episode_length )
 
     def printSolution ( self ) -> None:
         import itertools
