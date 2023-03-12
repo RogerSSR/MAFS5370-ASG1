@@ -4,9 +4,9 @@ from typing import Callable, Iterator, List, Mapping, Sequence, Set, Tuple
 
 import numpy as np
 
-from src.rl_lib.approximate_dynamic_programming import QValueFunctionApprox
+from src.rl_lib.approximate_dynamic_programming import back_opt_qvf, back_opt_vf_and_policy, QValueFunctionApprox
 from src.rl_lib.distribution import Categorical, Choose, Distribution, SampledDistribution
-from src.rl_lib.function_approx import learning_rate_schedule, Tabular
+from src.rl_lib.function_approx import AdamGradient, DNNApprox, DNNSpec, learning_rate_schedule, Tabular
 from src.rl_lib.markov_decision_process import MarkovDecisionProcess, NonTerminal, State, Terminal
 
 
@@ -57,11 +57,12 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
     totalSample: int
     actionSpaceLimit: int
 
-    riskyDist: Sequence [ Distribution [ float ] ]
-    riskfreeRate: Sequence [ float ]
+    riskyDist: Distribution [ float ]
+    riskfreeRate: float
+    alloc_choices: Sequence [ float ]
     utilityFunc: Callable [ [ float ], float ]
 
-    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, ttlSample: int, actionLimit: int = 10 ):
+    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, ttlSample: int = 1000, actionLimit: int = 20 ):
         super ( ).__init__ ( )
         self.w0 = w0
         self.a = a
@@ -70,14 +71,17 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
         self.utilityAlpha = utilityAlpha
         self.steps = steps
         self.totalSample = ttlSample
-        self.riskyDist = generateReturnSequence ( a, b, p )
-        self.riskfreeRate = np.zeros ( steps )
+        self.riskyDist = Categorical ( {
+            a: p,
+            b: (1 - p)
+            } )
+        self.riskfreeRate = 0.0
         self.utilityFunc = generateUtilityFunction ( utilityAlpha )
         self.actionSpaceLimit = actionLimit
 
     def step ( self, state: NonTerminal [ float ], action: float, ts: int ) -> SampledDistribution [ Tuple [ State [ float ], float ] ]:
         def sample_func ( wealth = state, allocation = action, t = ts ) -> Tuple [ State [ float ], float ]:
-            next_wealth: float = allocation * (1 + self.riskyDist [ t ].sample ( )) + (wealth.state - allocation) * (1 + self.riskfreeRate [ t ])
+            next_wealth: float = wealth.state * (allocation * (1 + self.riskyDist.sample ( )) + (1.0 - allocation) * (1 + self.riskfreeRate))
             reward: float = self.utilityFunc ( next_wealth ) if t == self.steps - 1 else 0
             next_state: State [ float ] = Terminal ( next_wealth ) if t == self.steps - 1 else NonTerminal ( next_wealth )
             return (next_state, reward)
@@ -85,7 +89,7 @@ class AssetAllocationMDP ( MarkovDecisionProcess [ float, float ] ):
         return SampledDistribution ( sampler = sample_func, expectation_samples = self.totalSample )
 
     def actions ( self, state: NonTerminal [ float ] ) -> Sequence [ float ]:
-        return np.linspace ( 0, state.state, self.actionSpaceLimit )
+        return np.linspace ( 0, 1.0, self.actionSpaceLimit )
 
     def getNonTerminalStates ( self, noOfTraces: int = 10000 ) -> Sequence [ NonTerminal [ float ] ]:
         ind: int = 0
@@ -114,14 +118,19 @@ class TDMDPAssetAllocationSol:
     max_episode_length: int
     gamma: float
     epsilon_as_func_of_episodes: Callable [ [ int ], float ]  # lambda k: k ** -0.5
-
-    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, totalSample: int, max_episode_length: int, epsilon_as_func_of_episodes: Callable [ [ int ], float ], gamma: float = 0.9, exponent: float = 0.5, initial_learning_rate: float = 0.03, half_life: float = 1000 ):
+    feature_funcs: Sequence [ Callable [ [ Tuple [ float, float ] ], float ] ]  # = [ lambda _: 1., lambda w_x: w_x [ 0 ], lambda w_x: w_x [ 1 ], lambda w_x: w_x [ 1 ] * w_x [ 1 ] ]
+    dnn: DNNSpec  # = DNNSpec ( neurons = [ ], bias = False, hidden_activation = lambda x: x, hidden_activation_deriv = lambda y: np.ones_like ( y ), output_activation = lambda x: - np.sign ( a ) * np.exp ( -x ), output_activation_deriv = lambda y: -y )
+    dnn_spec: DNNSpec
+    
+    def __init__ ( self, w0: float, a: float, b: float, p: float, utilityAlpha: float, steps: int, totalSample: int, max_episode_length: int, epsilon_as_func_of_episodes: Callable [ [ int ], float ], feature_funcs: Sequence [ Callable [ [ Tuple [ float, float ] ], float ] ], dnn: DNNSpec, gamma: float = 0.9, exponent: float = 0.5, initial_learning_rate: float = 0.03, half_life: float = 1000 ):
         self.mdp = AssetAllocationMDP ( w0, a, b, p, utilityAlpha, steps, totalSample )
         self.initial_qvf_dict = { (s, a): 0. for s in self.mdp.getNonTerminalStates ( ) for a in self.mdp.actions ( s ) }
         self.learning_rate_func = learning_rate_schedule ( initial_learning_rate = initial_learning_rate, half_life = half_life, exponent = exponent )
         self.max_episode_length = max_episode_length
         self.gamma = gamma
         self.epsilon_as_func_of_episodes = epsilon_as_func_of_episodes
+        self.feature_funcs = feature_funcs
+        self.dnn = dnn
 
     def glieSARSASolve ( self ) -> None:
         """
@@ -152,6 +161,60 @@ class TDMDPAssetAllocationSol:
                 yield q
                 steps += 1
                 state = next_state
+
+    def get_qvf_func_approx ( self ) -> DNNApprox [ Tuple [ NonTerminal [ float ], float ] ]:
+
+        adam_gradient: AdamGradient = AdamGradient ( learning_rate = 0.1, decay1 = 0.9, decay2 = 0.999 )
+        ffs: List [ Callable [ [ Tuple [ NonTerminal [ float ], float ] ], float ] ] = [ ]
+        for f in self.feature_functions:
+            def this_f ( pair: Tuple [ NonTerminal [ float ], float ], f = f ) -> float:
+                return f ( (pair [ 0 ].state, pair [ 1 ]) )
+
+            ffs.append ( this_f )
+
+        return DNNApprox.create ( feature_functions = ffs, dnn_spec = self.dnn_spec, adam_gradient = adam_gradient )
+
+    def get_states_distribution ( self, t: int ) -> SampledDistribution [ NonTerminal [ float ] ]:
+
+        actions_distr: Choose [ float ] = self.uniform_actions ( )
+
+        def states_sampler_func ( ) -> NonTerminal [ float ]:
+            wealth: float = self.initial_wealth_distribution.sample ( )
+            for i in range ( t ):
+                distr: Distribution [ float ] = self.risky_return_distributions [ i ]
+                rate: float = self.riskless_returns [ i ]
+                alloc: float = actions_distr.sample ( )
+                wealth = alloc * (1 + distr.sample ( )) + (wealth - alloc) * (1 + rate)
+            return NonTerminal ( wealth )
+
+        return SampledDistribution ( states_sampler_func )
+
+    def backward_induction_qvf ( self ) -> Iterator [ QValueFunctionApprox [ float, float ] ]:
+
+        init_fa: DNNApprox [ Tuple [ NonTerminal [ float ], float ] ] = self.get_qvf_func_approx ( )
+
+        mdp_f0_mu_triples: Sequence [ Tuple [ MarkovDecisionProcess [ float, float ], DNNApprox [ Tuple [ NonTerminal [ float ], float ] ], SampledDistribution [ NonTerminal [ float ] ] ] ] = [ (self.get_mdp ( i ), init_fa, self.get_states_distribution ( i )) for i in range ( self.time_steps ( ) ) ]
+
+        num_state_samples: int = 300
+        error_tolerance: float = 1e-6
+
+        return back_opt_qvf ( mdp_f0_mu_triples = mdp_f0_mu_triples, γ = 1.0, num_state_samples = num_state_samples, error_tolerance = error_tolerance )
+
+    def get_vf_func_approx ( self, ff: Sequence [ Callable [ [ NonTerminal [ float ] ], float ] ] ) -> DNNApprox [ NonTerminal [ float ] ]:
+
+        adam_gradient: AdamGradient = AdamGradient ( learning_rate = 0.1, decay1 = 0.9, decay2 = 0.999 )
+        return DNNApprox.create ( feature_functions = ff, dnn_spec = self.dnn_spec, adam_gradient = adam_gradient )
+
+    def backward_induction_vf_and_pi ( self, ff: Sequence [ Callable [ [ NonTerminal [ float ] ], float ] ] ) -> Iterator [ Tuple [ ValueFunctionApprox [ float ], DeterministicPolicy [ float, float ] ] ]:
+
+        init_fa: DNNApprox [ NonTerminal [ float ] ] = self.get_vf_func_approx ( ff )
+
+        mdp_f0_mu_triples: Sequence [ Tuple [ MarkovDecisionProcess [ float, float ], DNNApprox [ NonTerminal [ float ] ], SampledDistribution [ NonTerminal [ float ] ] ] ] = [ (self.get_mdp ( i ), init_fa, self.get_states_distribution ( i )) for i in range ( self.time_steps ( ) ) ]
+
+        num_state_samples: int = 300
+        error_tolerance: float = 1e-8
+
+        return back_opt_vf_and_policy ( mdp_f0_mu_triples = mdp_f0_mu_triples, γ = 1.0, num_state_samples = num_state_samples, error_tolerance = error_tolerance )
 
 
 if __name__ == '__main__':
