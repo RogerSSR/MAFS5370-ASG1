@@ -7,7 +7,7 @@ from src.tdMDPAssetsAllocationSol import AssetAllocationMDP
 
 class TestMDPFormation ( unittest.TestCase ):
     def setUp ( self ) -> None:
-        self.mdp = AssetAllocationMDP ( a = 1.1, b = 0.93, p = 0.5, utilityAlpha = 1.0, steps = 10, ttlSample = 10000 )
+        self.mdp = AssetAllocationMDP ( a = 1.1, b = 0.93, p = 0.5, utilityAlpha = 1.0, steps = 10, t = 0, ttlSample = 10000 )
 
     def testRiskyAssetReturn ( self ):
         self.assertTrue ( isinstance ( self.mdp.riskyDist.sample ( ), float ) )
