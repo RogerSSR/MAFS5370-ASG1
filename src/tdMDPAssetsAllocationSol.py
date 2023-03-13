@@ -8,7 +8,7 @@ from src.rl_lib.approximate_dynamic_programming import back_opt_qvf, back_opt_vf
 from src.rl_lib.distribution import Categorical, Choose, Distribution, SampledDistribution
 from src.rl_lib.function_approx import AdamGradient, DNNApprox, DNNSpec, learning_rate_schedule, Tabular
 from src.rl_lib.markov_decision_process import MarkovDecisionProcess, NonTerminal, State, Terminal
-
+from pprint import pprint
 
 def generateReturnSequence ( a: float, b: float, p: float ) -> Sequence [ Distribution [ float ] ]:
     while True:
@@ -223,9 +223,47 @@ class TDMDPAssetAllocationSol:
 
 
 if __name__ == '__main__':
+    
+    w0 : float = 100
+    a : float = 1.2
+    b : float = 0.9
+    p : float = 0.45
+    utilityAlpha : float = 1.0
+    steps : float = 10
+    totalSample : int = 1000
+    max_episode_length : int = 200    
+    epsilon_as_func_of_episodes: Callable [ [ int ], float ] = lambda k: k ** -0.5
+            
+    feature_funcs: Sequence[Callable[[Tuple[float, float]], float]] = [
+            lambda _: 1.,
+            lambda w_x: w_x[0],
+            lambda w_x: w_x[1],
+            lambda w_x: w_x[1] * w_x[1]
+        ]
+        
+    dnn: DNNSpec = DNNSpec(
+        neurons=[],
+        bias=False,
+        hidden_activation=lambda x: x,
+        hidden_activation_deriv=lambda y: np.ones_like(y),
+        output_activation=lambda x: - np.sign(a) * np.exp(-x),
+        output_activation_deriv=lambda y: -y
+    )
+        
+    solver : TDMDPAssetAllocationSol = TDMDPAssetAllocationSol( w0, a, b, p, utilityAlpha, steps, totalSample, max_episode_length, epsilon_as_func_of_episodes, feature_funcs, dnn )
+    it_qvf : Iterator[QValueFunctionApprox[float, float]] = solver.backward_induction_qvf()
 
-    print ( "Transition Map" )
-    print ( "--------------" )
-
-    print ( "Stationary Distribution" )
-    print ( "-----------------------" )
+    print("Backward Induction on Q-Value Function")
+    print("--------------------------------------")
+    print()
+    for t, q in enumerate(it_qvf):
+        print(f"Time {t:d}")
+        print()
+        opt_alloc: float = max(
+            ((q((NonTerminal(init_wealth), ac)), ac) for ac in solver.mdp.actions( )), key=itemgetter(0)
+        )[1]
+        val: float = max(q((NonTerminal(init_wealth), ac)) for ac in solver.mdp.actions( ))
+        print(f"Opt Risky Allocation = {opt_alloc:.3f}, Opt Val = {val:.3f}")
+        print("Optimal Weights below:")
+        for wts in q.weights:
+            pprint(wts.weights)
